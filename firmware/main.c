@@ -4,23 +4,20 @@ Includes
 #include <avr/io.h>
 #include <stdbool.h>
 #include <avr/interrupt.h>
-#include <util/delay.h>
 
 /********************************************************************************
 Defines
 ********************************************************************************/
 #define USART_BAUDRATE 31250
 #define BAUD_PRESCALE (((F_CPU / (USART_BAUDRATE * 16UL))) - 1)
+
+#define NOTE_ON 0x40
+#define NOTE_OFF 0x50
  
 /********************************************************************************
 Interrupt Routines
 ********************************************************************************/
- 
-// timer0 overflow
-ISR(TIMER0_OVF_vect) {
-    // XOR PORTA with 0x01 to toggle the second bit up
-    PORTB=PORTB ^ 0x01;
-}
+
 
 /********************************************************************************
 USART FUNCTONS
@@ -41,19 +38,6 @@ unsigned char USART_Receive( void ) {
 	while ( !(UCSRA & (1<<RXC)) ) {};
 	/* Get and return received data from buffer */ 
 	return UDR;
-}
-
-/********************************************************************************
-TIMER FUNCTONS
-********************************************************************************/
-void TIMER_Init( void ) {
-	// enable timer overflow interrupt for both Timer0 and Timer1
-    TIMSK=(1<<TOIE0);
-
-    // set timer0 counter initial value to 0
-    TCNT0=0x00;
-    // start timer0 with /1024 prescaler
-    TCCR0B = (1<<CS02) | (1<<CS00);
 }
 
 /********************************************************************************
@@ -83,13 +67,31 @@ void SPI_Write( char output ) {
 /********************************************************************************
 DAC SHIT
 ********************************************************************************/
-void WriteDACValue(uint16_t value) {
+void writeDACValue(uint16_t value) {
 	PORTB &= ~(_BV(PB1));
 	SPI_Write(0x10 | value >> 8);
 	SPI_Write(value & 0xFF);
 	PORTB |= _BV(PB1);
 }
- 
+
+/********************************************************************************
+MIDI SHIT
+********************************************************************************/
+uint16_t calcDACValue(unsigned char note) {
+	uint16_t result = note;
+	// gewoon efkes shiften om te testen
+	return result << 0x5;
+} 
+
+void handleNote(unsigned char message, unsigned char channel) {
+	unsigned char note = USART_Receive();
+    unsigned char velocity = USART_Receive();
+
+    uint16_t output = calcDACValue(note);
+    writeDACValue(output);
+}
+
+
 /********************************************************************************
 Main
 ********************************************************************************/
@@ -108,23 +110,30 @@ int main( void ) {
 
     //TIMER_Init();
     SPI_Init();
-
+    USART_Init();
 
 
     // enable interrupts
     // sei(); 
-    uint16_t output = 0;
     while(true) {
-    	//USIDR = output;
 
-    	WriteDACValue(output);
+    	unsigned char uart = USART_Receive();
 
-    	// laat maar overflowen
-    	output++;
-    	if (output >= 4096) {
-    		output = 0;
+    	if ((uart & 0x80) == 0x80) { // midi status message
+    		unsigned char message = uart & 0xF0;
+    		unsigned char channel = uart & 0x0F;
+
+    		switch (message) {
+    			case NOTE_ON:
+    			case NOTE_OFF:
+    				handleNote(message, channel);
+    				break;
+    		}
+
+    		// blink LED
     		PORTB ^=  _BV(PB0);
     	}
+    	// else ignore
     }
 }
 
