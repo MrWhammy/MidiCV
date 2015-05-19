@@ -19,10 +19,10 @@
 
 DEVICE     = attiny2313a
 DEVICE_AD  = t2313
-CLOCK      = 8000000
+CLOCK      = 20000000
 PROGRAMMER = -c dragon_isp -P usb
 OBJECTS    = main.o
-FUSES      = -U lfuse:w:0x64:m -U hfuse:w:0xdf:m -U efuse:w:0xff:m
+FUSES      = -U lfuse:w:0xff:m -U hfuse:w:0xdf:m -U efuse:w:0xff:m
 
 # ATMega8 fuse bits used above (fuse bits for other devices are different!):
 # Example for 8 MHz internal oscillator

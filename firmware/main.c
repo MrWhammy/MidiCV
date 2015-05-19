@@ -68,10 +68,10 @@ void SPI_Write( char output ) {
 DAC SHIT
 ********************************************************************************/
 void writeDACValue(uint16_t value) {
-	PORTB &= ~(_BV(PB1));
+	PORTB &= ~(_BV(PB4));
 	SPI_Write(0x10 | value >> 8);
 	SPI_Write(value & 0xFF);
-	PORTB |= _BV(PB1);
+	PORTB |= _BV(PB4);
 }
 
 /********************************************************************************
@@ -101,11 +101,11 @@ int main( void ) {
 	DDRB = 0;
 
 	// chip select high
-	DDRB |= _BV(PB1);
-	PORTB |= _BV(PB1);
+	DDRB |= _BV(PB4);
+	PORTB |= _BV(PB4);
 
     // Configure PORTB as output
-    DDRB |= _BV(PB0);
+    DDRB |= _BV(PB2);
     
 
     //TIMER_Init();
@@ -131,7 +131,7 @@ int main( void ) {
     		}
 
     		// blink LED
-    		PORTB ^=  _BV(PB0);
+    		PORTB ^=  _BV(PB2);
     	}
     	// else ignore
     }
