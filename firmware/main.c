@@ -120,15 +120,15 @@ int main( void ) {
     	unsigned char uart = USART_Receive();
 
     	if ((uart & 0x80) == 0x80) { // midi status message
-    		unsigned char message = uart & 0xF0;
-    		unsigned char channel = uart & 0x0F;
+    		// unsigned char message = uart & 0xF0;
+    		// unsigned char channel = uart & 0x0F;
 
-    		switch (message) {
-    			case NOTE_ON:
-    			case NOTE_OFF:
-    				handleNote(message, channel);
-    				break;
-    		}
+    		// switch (message) {
+    		// 	case NOTE_ON:
+    		// 	case NOTE_OFF:
+    		// 		handleNote(message, channel);
+    		// 		break;
+    		// }
 
     		// blink LED
     		PORTB ^=  _BV(PB2);
