@@ -3,8 +3,11 @@ Includes
 ********************************************************************************/
 #include <avr/io.h>
 #include <stdbool.h>
-//#include <avr/interrupt.h>
+#include <avr/interrupt.h>
 #include <avr/pgmspace.h>
+#include <avr/wdt.h>
+#include "usbdrv.h"
+#include <util/delay.h>
 
 /********************************************************************************
 Defines
@@ -19,6 +22,9 @@ Defines
 
 #define NOTE_ON 0x90
 #define NOTE_OFF 0x80
+
+#define USB_LED_OFF 0
+#define USB_LED_ON  1
  
 /********************************************************************************
 Interrupt Routines
@@ -130,46 +136,51 @@ void handleNote(unsigned char message, unsigned char channel) {
     }
 }
 
+/********************************************************************************
+USB
+********************************************************************************/
+// this gets called when custom control message is received
+USB_PUBLIC uchar usbFunctionSetup(uchar data[8]) {
+    usbRequest_t *rq = (void *)data; // cast data to correct type
+        
+    switch(rq->bRequest) { // custom command is in the bRequest field
+    case USB_LED_ON:
+        PORTB |= _BV(PB2); // turn LED on
+        return 0;
+    case USB_LED_OFF: 
+        PORTB &= ~(_BV(PB2)); // turn LED off
+        return 0;
+    }
+
+    return 0; // should not get here
+}
 
 /********************************************************************************
 Main
 ********************************************************************************/
 int main( void ) {
 
-	PORTB = 0;
-	DDRB = 0;
+  // Configure PORTB as output
+  DDRB |= _BV(PB2);
 
-	// SPI chip select high
-	DDRB |= _BV(PB4);
-	PORTB |= _BV(PB4);
+	uchar i;
 
-    // Configure PORTB as output
-    DDRB |= _BV(PB2);
-    
+    wdt_enable(WDTO_1S); // enable 1s watchdog timer
 
-    //TIMER_Init();
-    SPI_Init();
-    USART_Init();
-
-
-    // enable interrupts
-    // sei(); 
-    while(true) {
-
-    	unsigned char uart = USART_Receive();
-
-    	if ((uart & 0x80) == 0x80) { // midi status message
-    		unsigned char message = uart & 0xF0;
-    		unsigned char channel = uart & 0x0F;
-
-    		switch (message) {
-    			case NOTE_ON:
-    			case NOTE_OFF:
-    				handleNote(message, channel);
-    				break;
-    		}
-    	}
-    	// else ignore
+    usbInit();
+        
+    usbDeviceDisconnect(); // enforce re-enumeration
+    for(i = 0; i<250; i++) { // wait 500 ms
+        wdt_reset(); // keep the watchdog happy
+        _delay_ms(2);
+    }
+    usbDeviceConnect();
+        
+    sei(); // Enable interrupts after re-enumeration
+        
+    while(1) {
+        wdt_reset(); // keep the watchdog happy
+        usbPoll();
     }
 }
 

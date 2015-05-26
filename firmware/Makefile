@@ -21,8 +21,9 @@ DEVICE     = attiny2313a
 DEVICE_AD  = t2313
 CLOCK      = 20000000
 PROGRAMMER = -c dragon_isp -P usb
-OBJECTS    = main.o
+OBJECTS = usbdrv/usbdrv.o usbdrv/oddebug.o usbdrv/usbdrvasm.o main.o
 FUSES      = -U lfuse:w:0xff:m -U hfuse:w:0xdf:m -U efuse:w:0xff:m
+CFLAGS     = -Iusbdrv
 
 # ATMega8 fuse bits used above (fuse bits for other devices are different!):
 # Example for 8 MHz internal oscillator
@@ -50,7 +51,7 @@ FUSES      = -U lfuse:w:0xff:m -U hfuse:w:0xdf:m -U efuse:w:0xff:m
 # Tune the lines below only if you know what you are doing:
 
 AVRDUDE = avrdude $(PROGRAMMER) -p $(DEVICE_AD)
-COMPILE = avr-gcc -Wall -Os -DF_CPU=$(CLOCK) -mmcu=$(DEVICE)
+COMPILE = avr-gcc -Wall -Os -DF_CPU=$(CLOCK) -mmcu=$(DEVICE) $(CFLAGS)
 
 # symbolic targets:
 all:	main.hex
