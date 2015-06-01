@@ -128,6 +128,10 @@ uint16_t calcDACValue(unsigned char note) {
 	return pgm_read_word(&MIDI_CV[index]);
 } 
 
+unsigned char lastNote = 0;
+
+unsigned char noteNames[12] = "CdDeEFgGaAbB";
+
 void handleNote(unsigned char message, unsigned char channel) {
 	unsigned char note = midiReceiveBuffer[1];
   unsigned char velocity = midiReceiveBuffer[2];
@@ -158,6 +162,8 @@ void handleNote(unsigned char message, unsigned char channel) {
       PORTB |= _BV(PB2);
       #endif
     }
+
+    lastNote = note;
 }
 
 void handleMidiBuffer() {
@@ -189,8 +195,8 @@ USB_PUBLIC uchar usbFunctionSetup(uchar data[8]) {
         PORTB &= ~(_BV(PB2)); // turn LED off
         return 0;
     case USB_DATA_OUT: // send data to PC
-        usbMsgPtr = midiReceiveBuffer;
-        return sizeof(midiReceiveBuffer);
+        usbMsgPtr = &noteNames[lastNote % 12];
+        return 1;
     }
 
     return 0; // should not get here
