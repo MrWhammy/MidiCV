@@ -30,7 +30,33 @@ Defines
 /********************************************************************************
 Interrupt Routines
 ********************************************************************************/
+volatile uint8_t midiBytesReceived = 0;
+volatile unsigned char midiReceiveBuffer[3]; 
 
+ISR(_VECTOR(7))
+{
+  unsigned char uart = UDR;
+  // midiReceiveBuffer[0] = uart;
+  // midiReceiveBuffer[1] = uart;
+  // midiReceiveBuffer[2] = uart;
+
+  // if bytesReceived is 3 or bigger and we get here: ignore
+  uint8_t bytesReceived = midiBytesReceived;
+  if (bytesReceived < 3) {
+    // a status message resets the buffer index (but not if we are processing another status message)
+    if ((uart & 0x80) == 0x80) {
+      if (bytesReceived > 0)
+        bytesReceived = 0;
+
+      midiReceiveBuffer[bytesReceived] = uart;
+      midiBytesReceived = bytesReceived + 1;
+    } else if (bytesReceived > 0) {
+      midiReceiveBuffer[bytesReceived] = uart;
+      midiBytesReceived = bytesReceived + 1;
+    }
+    // else data byte received without status byte > ignore
+  }
+}
 
 /********************************************************************************
 USART FUNCTONS
@@ -41,22 +67,18 @@ void USART_Init( void ) {
 	UBRRH = (BAUD_PRESCALE >> 8); 
 	UBRRL = BAUD_PRESCALE;
 	/* Enable receiver and transmitter */ 
-	UCSRB = (1<<RXEN)|(1<<TXEN);
-	/* Set frame format: 8data, 2stop bit */ 
-	UCSRC = (1<<USBS)|(3<<UCSZ0);
-}
-
-unsigned char USART_Receive( void ) {
-	/* Wait for data to be received */ 
-	while ( !(UCSRA & (1<<RXC)) ) {};
-	/* Get and return received data from buffer */ 
-	return UDR;
+	UCSRB = (1<<RXEN)|(1<<RXCIE);
+	/* Set frame format: 8data */ 
+	UCSRC = (1 << UCSZ0) | (1 << UCSZ1);
 }
 
 /********************************************************************************
 SPI FUNCTONS
 ********************************************************************************/
 void SPI_Init( void ) {
+   // SPI chip select high
+  DDRB |= _BV(PB4);
+  PORTB |= _BV(PB4);
 	// set three wire mode and external clock with strobe bit
 	// start with clock low, so no USICLK here
 	USICR = (1<<USIWM1) | (1<<USICS1) | (1<<USITC);
@@ -90,6 +112,7 @@ void writeDACValue(uint16_t value) {
 /********************************************************************************
 MIDI
 ********************************************************************************/
+
 static const uint16_t MIDI_CV[] PROGMEM =
 {
     149, 157, 167, 177, 187, 198, 210, 223, 236, 250, 265, 281, 297, 315, 334, 
@@ -106,8 +129,8 @@ uint16_t calcDACValue(unsigned char note) {
 } 
 
 void handleNote(unsigned char message, unsigned char channel) {
-	unsigned char note = USART_Receive();
-  unsigned char velocity = USART_Receive();
+	unsigned char note = midiReceiveBuffer[1];
+  unsigned char velocity = midiReceiveBuffer[2];
 
     if (message == NOTE_OFF
     	|| velocity == 0) {
@@ -137,11 +160,22 @@ void handleNote(unsigned char message, unsigned char channel) {
     }
 }
 
+void handleMidiBuffer() {
+  unsigned char uart = midiReceiveBuffer[0];
+  unsigned char message = uart & 0xF0;
+  unsigned char channel = uart & 0x0F;
+
+  switch (message) {
+    case NOTE_ON:
+    case NOTE_OFF:
+      handleNote(message, channel);
+      break;
+  }
+}
+
 /********************************************************************************
 USB
 ********************************************************************************/
-
-static uchar replyBuf[16] = "Hello, Brecht!";
 
 // this gets called when custom control message is received
 USB_PUBLIC uchar usbFunctionSetup(uchar data[8]) {
@@ -155,8 +189,8 @@ USB_PUBLIC uchar usbFunctionSetup(uchar data[8]) {
         PORTB &= ~(_BV(PB2)); // turn LED off
         return 0;
     case USB_DATA_OUT: // send data to PC
-        usbMsgPtr = replyBuf;
-        return sizeof(replyBuf);
+        usbMsgPtr = midiReceiveBuffer;
+        return sizeof(midiReceiveBuffer);
     }
 
     return 0; // should not get here
@@ -166,11 +200,17 @@ USB_PUBLIC uchar usbFunctionSetup(uchar data[8]) {
 Main
 ********************************************************************************/
 int main( void ) {
+  // reset
+  PORTB = 0;
+  DDRB = 0;
 
-  // Configure PORTB as output
+  // Configure PB2 (GATE) as output
   DDRB |= _BV(PB2);
 
     wdt_enable(WDTO_1S); // enable 1s watchdog timer
+
+    SPI_Init();
+    USART_Init();
 
     // ========= USB INIT =============
     usbInit();
@@ -189,7 +229,11 @@ int main( void ) {
     while(1) {
         wdt_reset(); // keep the watchdog happy
         usbPoll();
+
+        if (midiBytesReceived == 3) {
+           handleMidiBuffer();
+           midiBytesReceived = 0;
+        }
     }
 }
-
 
