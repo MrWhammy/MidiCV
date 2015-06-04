@@ -15,8 +15,8 @@ Defines
 #define USART_BAUDRATE 31250 // per MIDI standard
 #define BAUD_PRESCALE (((F_CPU / (USART_BAUDRATE * 16UL))) - 1)
 
-#define TRANSPOSE 2 // number of octaves transposed
-#define MIDI_CV_LENGTH 58 // number of output voltages available
+#define TRANSPOSE 0 // number of octaves transposed
+#define MIDI_CV_LENGTH 24 // number of output voltages available
 
 #define NOTE_ON 0x90 // NOTE_ON MIDI MESSAGE
 #define NOTE_OFF 0x80 // NOTE_OFF MIDI MESSAGE
@@ -120,25 +120,43 @@ MIDI
 
 // to avoid having to calculate, we keep these in prog memory
 // prog mem not RAM due to size constraints (prog: 2K, ram: 128B)
-// calculated with A as 1000, Hz/V, 12TET
+// calculated with C as 1000, Hz/V, 12TET
 static const uint16_t MIDI_CV[] PROGMEM =
 {
-    149, 157, 167, 177, 187, 198, 210, 223, 236, 250, 265, 281, 297, 315, 334, 
-    354, 375, 397, 420, 445, 472, 500, 530, 561, 595, 630, 667, 707, 749, 794, 
-    841, 891, 944, 1000, 1059, 1122, 1189, 1260, 1335, 1414, 1498, 1587, 1682, 
+    1000, 1059, 1122, 1189, 1260, 1335, 1414, 1498, 1587, 1682, 
     1782, 1888, 2000, 2119, 2245, 2378, 2520, 2670, 2828, 2997, 3175, 3364, 
-    3564, 3775, 4000
+    3564, 3775
 };
 
 uint16_t calcDACValue(unsigned char note) {
   // simple table lookup
-  unsigned char index = (note - TRANSPOSE * 12) % MIDI_CV_LENGTH; 
+  unsigned char index = note % MIDI_CV_LENGTH; 
 	return pgm_read_word(&MIDI_CV[index]);
 } 
 
 // no need for volatile, set from (subroutine of) main loop
-unsigned char lastNote = 0;
-unsigned char noteNames[12] = "CdDeEFgGaAbB";
+unsigned char noteNames[13] = "CdDeEFgGaAbB ";
+
+// 10 is randomly chosen
+unsigned char noteStack[10] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+int8_t noteStackPointer = -1;
+
+// play what's on top of the stack, or stop playing if nothing's on top of the stack
+void playNote() {
+  if (noteStackPointer > -1) {
+      // set CV first, so if previously there was no note, GATE is only set when CV is certainly there
+      // CV
+      uint16_t output = calcDACValue(noteStack[noteStackPointer]);
+      writeDACValue(output);
+
+      // GATE ON (active low for Korg)
+      PORTB &= ~(_BV(PB2));
+    } else { // message == NOTE_ON && velocity > 0 => GATE ON
+      // leave CV as it is
+      // GATE OFF (active low for Korg)
+      PORTB |= _BV(PB2);
+    }
+}
 
 void handleNote(unsigned char message, unsigned char channel) {
 	unsigned char note = midiReceiveBuffer[1];
@@ -146,21 +164,32 @@ void handleNote(unsigned char message, unsigned char channel) {
 
     if (message == NOTE_OFF
     	|| velocity == 0) {
-    	// leave CV as it is
-    	// GATE OFF (active low for Korg)
-      PORTB |= _BV(PB2);
-    } else { // message == NOTE_ON && velocity > 0 => GATE ON
-     	// set CV first, so if previously there was no note, GATE is only set when CV is certainly there
-     	// CV
-     	uint16_t output = calcDACValue(note);
-    	writeDACValue(output);
+    	int8_t tempPointer = noteStackPointer;
 
-    	// GATE ON (active low for Korg)
-      PORTB &= ~(_BV(PB2));
+      // find note that was released in noteStack
+      while (tempPointer > 0 && noteStack[tempPointer] != note)
+        tempPointer--;
+
+      if (tempPointer > -1) { // note found in stack
+        // set note off 
+        noteStack[tempPointer] = 0xFF;
+        if (tempPointer == noteStackPointer) {
+          // set noteStackPointer to last played note
+          while (noteStackPointer > -1 && noteStack[noteStackPointer] == 0xFF)
+            noteStackPointer--;
+        } // else leave noteStackPointer alone
+      } // else note not found, ignore
+
+    } else { // message == NOTE_ON && velocity > 0 => GATE ON
+     	if (noteStackPointer >= 9) {
+        // stack overflow, compact stack
+      } else {
+        noteStackPointer++;
+        noteStack[noteStackPointer] = note;
+      }
     }
 
-    // in case USB out asks for it
-    lastNote = note;
+    playNote();
 }
 
 void handleMidiBuffer() {
@@ -192,8 +221,13 @@ USB_PUBLIC uchar usbFunctionSetup(uchar data[8]) {
         PORTB &= ~(_BV(PB2)); // turn LED off
         return 0;
     case USB_DATA_OUT: // send data to PC
-        // send 1 character, the last played note
-        usbMsgPtr = &noteNames[lastNote % 12];
+        // send 1 character, the note playing
+        if (noteStackPointer > -1) {
+          usbMsgPtr = &noteNames[noteStack[noteStackPointer] % 12];
+        } else {
+          // or   if no note playing
+          usbMsgPtr = &noteNames[13];
+        }
         return 1;
     }
 
