@@ -30,6 +30,7 @@ Defines
 Interrupt Routines
 ********************************************************************************/
 volatile uint8_t midiBytesReceived = 0;
+volatile uint8_t midiBytesExpected = 0;
 volatile unsigned char midiReceiveBuffer[3]; 
 
 // From the datasheet, predefined names don't seem to work
@@ -39,22 +40,24 @@ ISR(_VECTOR(7))
   // read from UDR resets interrupt flag
   unsigned char uart = UDR;
 
-  // if bytesReceived is 3 or bigger and we get here: ignore
   uint8_t bytesReceived = midiBytesReceived;
-  if (bytesReceived < 3) {
-    // a status message resets the buffer index
-    if ((uart & 0x80) == 0x80) {
-      if (bytesReceived > 0)
-        bytesReceived = 0;
 
+    // a status message resets the buffer index
+    if ((uart & 0xF0) == NOTE_ON
+      || (uart & 0xF0) == NOTE_OFF) {
+      midiReceiveBuffer[0] = uart;
+      midiBytesReceived = 1;
+
+      if (((uart & 0xF0) == NOTE_ON)
+        || ((uart & 0xF0) == NOTE_OFF))
+        midiBytesExpected = 3;
+      else
+        midiBytesExpected = 1;
+    } else if (bytesReceived > 0 && (uart & 0x80) == 0) {
+      // databytes
       midiReceiveBuffer[bytesReceived] = uart;
       midiBytesReceived = bytesReceived + 1;
-    } else if (bytesReceived > 0) {
-      midiReceiveBuffer[bytesReceived] = uart;
-      midiBytesReceived = bytesReceived + 1;
-    }
-    // else data byte received without status byte > ignore
-  }
+    } // else data byte received without status byte > ignore
 }
 
 /********************************************************************************
@@ -163,7 +166,7 @@ void handleNote(unsigned char message, unsigned char channel) {
   unsigned char velocity = midiReceiveBuffer[2];
 
     if (message == NOTE_OFF
-    	|| velocity == 0) {
+      || velocity == 0) {
     	int8_t tempPointer = noteStackPointer;
 
       // find note that was released in noteStack
@@ -182,11 +185,12 @@ void handleNote(unsigned char message, unsigned char channel) {
 
     } else { // message == NOTE_ON && velocity > 0 => GATE ON
      	if (noteStackPointer >= 9) {
-        // stack overflow, compact stack
-      } else {
-        noteStackPointer++;
-        noteStack[noteStackPointer] = note;
+        // stack overflow, restart
+        noteStackPointer = -1;
       }
+
+      noteStackPointer++;
+      noteStack[noteStackPointer] = note;
     }
 
     playNote();
@@ -273,10 +277,12 @@ int main( void ) {
         usbPoll(); // needs to be called at least once every 50ms
 
         // full note_on/note_off
-        if (midiBytesReceived == 3) {
+        if (midiBytesExpected > 0 && midiBytesReceived >= midiBytesExpected) {
            handleMidiBuffer();
+
            // reset for new receive
            midiBytesReceived = 0;
+           midiBytesExpected = 0;
         }
     }
 }
