@@ -18,8 +18,14 @@ Defines
 #define TRANSPOSE 0 // number of octaves transposed
 #define MIDI_CV_LENGTH 24 // number of output voltages available
 
-#define NOTE_ON 0x90 // NOTE_ON MIDI MESSAGE
 #define NOTE_OFF 0x80 // NOTE_OFF MIDI MESSAGE
+#define NOTE_ON 0x90 // NOTE_ON MIDI MESSAGE
+#define AFTERTOUCH 0xA0 // polyphonic key pressure
+#define CONTROL_CHANGE 0xB0 // control change
+#define PROGRAM_CHANGE 0xC0 // program change
+#define CHANNEL_PRESSURE 0xD0 // channel pressure after touch
+#define PITCH_BEND 0xE0 // pitch bend change
+#define SYSTEM_MSG 0xF0 // system real time or common
 
 // defined by convention with usbtest program
 #define USB_LED_OFF 0
@@ -29,9 +35,9 @@ Defines
 /********************************************************************************
 Interrupt Routines
 ********************************************************************************/
-volatile uint8_t midiBytesReceived = 0;
-volatile uint8_t midiBytesExpected = 0;
-volatile unsigned char midiReceiveBuffer[3]; 
+volatile unsigned char statusByte = 0;
+volatile uint8_t dataBytesReceived = 0;
+volatile unsigned char dataBytesBuffer[2]; 
 
 // From the datasheet, predefined names don't seem to work
 // 8 | 0x0007 | USART0, RX | USART0, Rx Complete
@@ -40,24 +46,16 @@ ISR(_VECTOR(7))
   // read from UDR resets interrupt flag
   unsigned char uart = UDR;
 
-  uint8_t bytesReceived = midiBytesReceived;
+  // ignore all system messages (both common and real time
+  if ((uart & 0xF0) == SYSTEM_MSG)
+    return;
 
-    // a status message resets the buffer index
-    if ((uart & 0xF0) == NOTE_ON
-      || (uart & 0xF0) == NOTE_OFF) {
-      midiReceiveBuffer[0] = uart;
-      midiBytesReceived = 1;
-
-      if (((uart & 0xF0) == NOTE_ON)
-        || ((uart & 0xF0) == NOTE_OFF))
-        midiBytesExpected = 3;
-      else
-        midiBytesExpected = 1;
-    } else if (bytesReceived > 0 && (uart & 0x80) == 0) {
-      // databytes
-      midiReceiveBuffer[bytesReceived] = uart;
-      midiBytesReceived = bytesReceived + 1;
-    } // else data byte received without status byte > ignore
+  if ((uart & 0x80) == 0x80) {
+    statusByte = uart;
+  } else if (statusByte > 0) {
+    dataBytesBuffer[dataBytesReceived] = uart;
+    dataBytesReceived++;
+  }
 }
 
 /********************************************************************************
@@ -162,8 +160,8 @@ void playNote() {
 }
 
 void handleNote(unsigned char message, unsigned char channel) {
-	unsigned char note = midiReceiveBuffer[1];
-  unsigned char velocity = midiReceiveBuffer[2];
+	unsigned char note = dataBytesBuffer[0];
+  unsigned char velocity = dataBytesBuffer[1];
 
     if (message == NOTE_OFF
       || velocity == 0) {
@@ -196,15 +194,31 @@ void handleNote(unsigned char message, unsigned char channel) {
     playNote();
 }
 
-void handleMidiBuffer() {
-  unsigned char uart = midiReceiveBuffer[0];
-  unsigned char message = uart & 0xF0;
-  unsigned char channel = uart & 0x0F;
+void midiPoll() {
+  unsigned char status = statusByte;
+  unsigned char message = status & 0xF0;
+  unsigned char channel = status & 0x0F;
 
   switch (message) {
-    case NOTE_ON:
     case NOTE_OFF:
-      handleNote(message, channel);
+    case NOTE_ON:
+      if (dataBytesReceived == 2) {
+        handleNote(message, channel);
+        dataBytesReceived = 0;
+      }
+      break;
+    case AFTERTOUCH:
+    case CONTROL_CHANGE:
+    case PITCH_BEND:
+      if (dataBytesReceived == 2) {
+        dataBytesReceived = 0;
+      }
+      break;
+    case CHANNEL_PRESSURE:
+    case PROGRAM_CHANGE:
+      if (dataBytesReceived == 1) {
+        dataBytesReceived = 0;
+      }
       break;
   }
 }
@@ -276,14 +290,7 @@ int main( void ) {
         // all usb functions are called from this function
         usbPoll(); // needs to be called at least once every 50ms
 
-        // full note_on/note_off
-        if (midiBytesExpected > 0 && midiBytesReceived >= midiBytesExpected) {
-           handleMidiBuffer();
-
-           // reset for new receive
-           midiBytesReceived = 0;
-           midiBytesExpected = 0;
-        }
+        midiPoll();
     }
 }
 
