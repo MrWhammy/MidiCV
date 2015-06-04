@@ -26,6 +26,7 @@ Defines
 #define CHANNEL_PRESSURE 0xD0 // channel pressure after touch
 #define PITCH_BEND 0xE0 // pitch bend change
 #define SYSTEM_MSG 0xF0 // system real time or common
+#define SYSTEM_REAL_TIME 0xF8 // system real time
 
 // defined by convention with usbtest program
 #define USB_LED_OFF 0
@@ -46,15 +47,18 @@ ISR(_VECTOR(7))
   // read from UDR resets interrupt flag
   unsigned char uart = UDR;
 
-  // ignore all system messages (both common and real time
-  if ((uart & 0xF0) == SYSTEM_MSG)
+  // ignore all system real time messages
+  if ((uart & SYSTEM_REAL_TIME) == SYSTEM_REAL_TIME)
     return;
 
   if ((uart & 0x80) == 0x80) {
     statusByte = uart;
+    dataBytesReceived = 0;
   } else if (statusByte > 0) {
-    dataBytesBuffer[dataBytesReceived] = uart;
-    dataBytesReceived++;
+    if (dataBytesReceived < 2) { // only sysex message can be longer than two
+      dataBytesBuffer[dataBytesReceived] = uart;
+      dataBytesReceived++;
+    }
   }
 }
 
