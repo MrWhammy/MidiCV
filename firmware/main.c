@@ -32,6 +32,11 @@ Defines
 #define USB_LED_OFF 0
 #define USB_LED_ON  1
 #define USB_DATA_OUT 2
+
+// define by our own convention
+// CONFIG section
+#define HIGHNOTE 0
+// #define STRIGGER 1
  
 /********************************************************************************
 Interrupt Routines
@@ -111,12 +116,53 @@ DAC
 void writeDACValue(uint16_t value) {
   // chip select
 	PORTB &= ~(_BV(PB4));
-  // write MSB
+  // write MSB (first nibble of value is 0 by convention (highest value is 0x0FFF, 4096))
 	SPI_Write(0x10 | value >> 8);
   // write LSB
 	SPI_Write(value & 0xFF);
   // chip deselect latches output
 	PORTB |= _BV(PB4);
+}
+
+/********************************************************************************
+CONFIG
+********************************************************************************/
+unsigned char config = 0;
+
+void readConfig() {
+  // read from EEPROM
+}
+
+void writeConfig(unsigned char newConf) {
+  config = newConf;
+  // writethrough to EEPROM
+}
+
+/********************************************************************************
+GATE
+********************************************************************************/
+void gateInit() {
+  // Configure PB2 (GATE) as output
+  DDRB |= _BV(PB2);
+}
+
+void gateOn() {
+  //if ((config & _BV(STRIGGER)) == _BV(STRIGGER)) {
+    // (active low for Korg)
+    PORTB &= ~(_BV(PB2));
+ // } else {
+ //   PORTB |= _BV(PB2);
+  //}
+}
+
+void gateOff() {
+  // GATE OFF 
+  //if ((config & _BV(STRIGGER)) == _BV(STRIGGER)) {
+    // (active low for Korg)
+    PORTB |= _BV(PB2);
+  //} else {
+  //  PORTB &= ~(_BV(PB2));
+  //}
 }
 
 /********************************************************************************
@@ -145,23 +191,45 @@ unsigned char noteNames[13] = "CdDeEFgGaAbB ";
 // 10 is randomly chosen
 unsigned char noteStack[10] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 int8_t noteStackPointer = -1;
+unsigned char config;
+
+// unsigned char findHighestNote() {
+//   unsigned char highestNote = 0;
+//   int tempPointer = 0;
+//   while (tempPointer <= noteStackPointer) {
+//     unsigned char note = noteStack[tempPointer];
+//     if (note < 0xFF && note > highestNote) 
+//       highestNote = note;
+//     tempPointer++;
+//   }
+//   return highestNote;
+// }
+
+unsigned char findLatestNote() {
+  return noteStack[noteStackPointer];
+}
+
+unsigned char findNote() {
+  // if ((config & _BV(HIGHNOTE)) == _BV(HIGHNOTE))
+  //   return findHighestNote();
+  // else // latest note
+    return findLatestNote();
+}
 
 // play what's on top of the stack, or stop playing if nothing's on top of the stack
 void playNote() {
   if (noteStackPointer > -1) {
       // set CV first, so if previously there was no note, GATE is only set when CV is certainly there
       // CV
-      uint16_t output = calcDACValue(noteStack[noteStackPointer]);
+      uint16_t output = calcDACValue(findNote());
       writeDACValue(output);
 
-      // GATE ON (active low for Korg)
-      PORTB &= ~(_BV(PB2));
+      gateOn();
     } else { // message == NOTE_ON && velocity > 0 => GATE ON
       // leave CV as it is
-      // GATE OFF (active low for Korg)
-      PORTB |= _BV(PB2);
+      gateOff();
     }
-}
+  }
 
 void handleNote(unsigned char message, unsigned char channel) {
 	unsigned char note = dataBytesBuffer[0];
@@ -191,17 +259,21 @@ void handleNote(unsigned char message, unsigned char channel) {
         noteStackPointer = -1;
       }
 
-      noteStackPointer++;
+      // add the new note
+      noteStackPointer++; // pointer starts at -1, so add1 first
       noteStack[noteStackPointer] = note;
     }
 
+    // set CV/GATE according to stack
     playNote();
 }
 
+// this should be called every so often to ensure handling
+// of the midi buffer
 void midiPoll() {
   unsigned char status = statusByte;
-  unsigned char message = status & 0xF0;
-  unsigned char channel = status & 0x0F;
+  unsigned char message = status & 0xF0; // first nibble is the message
+  unsigned char channel = status & 0x0F; // second nibble is the channel (for channel voice messages)
 
   switch (message) {
     case NOTE_OFF:
@@ -224,6 +296,9 @@ void midiPoll() {
         dataBytesReceived = 0;
       }
       break;
+    case SYSTEM_MSG:
+      dataBytesReceived = 0;
+      break;
   }
 }
 
@@ -237,10 +312,10 @@ USB_PUBLIC uchar usbFunctionSetup(uchar data[8]) {
         
     switch(rq->bRequest) { // custom command is in the bRequest field
     case USB_LED_ON:
-        PORTB |= _BV(PB2); // turn LED on
+        writeConfig(config | _BV(HIGHNOTE)); // write highest note
         return 0;
     case USB_LED_OFF: 
-        PORTB &= ~(_BV(PB2)); // turn LED off
+        writeConfig(config & ~_BV(HIGHNOTE)); // write latest note
         return 0;
     case USB_DATA_OUT: // send data to PC
         // send 1 character, the note playing
@@ -264,10 +339,11 @@ int main( void ) {
   PORTB = 0;
   DDRB = 0;
 
-  // Configure PB2 (GATE) as output
-  DDRB |= _BV(PB2);
-  // GATE OFF on startup (active low for Korg)
-  PORTB |= _BV(PB2);
+
+  readConfig();
+
+  gateInit();
+  gateOff();
 
     wdt_enable(WDTO_1S); // enable 1s watchdog timer
 
